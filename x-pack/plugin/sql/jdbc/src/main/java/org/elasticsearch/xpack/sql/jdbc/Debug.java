@@ -1,12 +1,14 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.sql.jdbc;
 
 import org.elasticsearch.xpack.sql.client.SuppressForbidden;
 
+import javax.sql.DataSource;
 import java.io.OutputStreamWriter;
 import java.io.PrintStream;
 import java.io.PrintWriter;
@@ -26,8 +28,6 @@ import java.sql.ResultSetMetaData;
 import java.sql.Statement;
 import java.util.HashMap;
 import java.util.Map;
-
-import javax.sql.DataSource;
 
 /**
  * Class handling debug logging. Typically disabled (hence why it's called debug).
@@ -72,7 +72,7 @@ final class Debug {
         return createProxy(Connection.class, new ConnectionProxy(logger(info, managedPrinter), connection));
     }
 
-    static DatabaseMetaData proxy(DatabaseMetadataProxy handler) {
+    static DatabaseMetaData proxy(DatabaseMetaDataProxy handler) {
         return createProxy(DatabaseMetaData.class, handler);
     }
 
@@ -184,7 +184,7 @@ final class Debug {
     }
 
     static void release(JdbcConfiguration info) {
-        if (!info.debug()) {
+        if (info.debug() == false) {
             return;
         }
 

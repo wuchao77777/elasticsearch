@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.script.expression;
@@ -23,7 +12,6 @@ import org.apache.lucene.expressions.Expression;
 import org.apache.lucene.expressions.SimpleBindings;
 import org.apache.lucene.expressions.js.JavascriptCompiler;
 import org.apache.lucene.expressions.js.VariableContext;
-import org.apache.lucene.queries.function.valuesource.DoubleConstValueSource;
 import org.apache.lucene.search.DoubleValuesSource;
 import org.apache.lucene.search.SortField;
 import org.elasticsearch.SpecialPermission;
@@ -446,7 +434,7 @@ public class ExpressionScriptEngine implements ScriptEngine {
                     dateAccessor = true;
                 }
             }
-            if (!dateAccessor) {
+            if (dateAccessor == false) {
                 throw new IllegalArgumentException(
                     "Variable [" + variable + "] does not follow an allowed format of either doc['field'] or doc['field'].method()"
                 );
@@ -454,13 +442,13 @@ public class ExpressionScriptEngine implements ScriptEngine {
         }
 
         String fieldname = parts[1].text;
-        MappedFieldType fieldType = lookup.doc().mapperService().fieldType(fieldname);
+        MappedFieldType fieldType = lookup.fieldType(fieldname);
 
         if (fieldType == null) {
             throw new ParseException("Field [" + fieldname + "] does not exist in mappings", 5);
         }
 
-        IndexFieldData<?> fieldData = lookup.doc().getForField(fieldType);
+        IndexFieldData<?> fieldData = lookup.getForField(fieldType);
         final DoubleValuesSource valueSource;
         if (fieldType instanceof GeoPointFieldType) {
             // geo
@@ -507,7 +495,7 @@ public class ExpressionScriptEngine implements ScriptEngine {
         // but if we were to reverse it, we could provide a way to supply dynamic defaults for documents missing the field?
         Object value = params.get(variable);
         if (value instanceof Number) {
-            bindings.add(variable, new DoubleConstValueSource(((Number) value).doubleValue()).asDoubleValuesSource());
+            bindings.add(variable, DoubleValuesSource.constant(((Number)value).doubleValue()));
         } else {
             throw new ParseException("Parameter [" + variable + "] must be a numeric type", 0);
         }

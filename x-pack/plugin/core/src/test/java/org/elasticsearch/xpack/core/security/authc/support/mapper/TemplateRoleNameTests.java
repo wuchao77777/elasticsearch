@@ -1,14 +1,15 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 
 package org.elasticsearch.xpack.core.security.authc.support.mapper;
 
 import org.elasticsearch.cluster.ClusterChangedEvent;
 import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
@@ -20,11 +21,13 @@ import org.elasticsearch.common.xcontent.DeprecationHandler;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.script.ScriptEngine;
 import org.elasticsearch.script.ScriptException;
-import org.elasticsearch.script.ScriptMetaData;
+import org.elasticsearch.script.ScriptMetadata;
 import org.elasticsearch.script.ScriptModule;
 import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.script.StoredScriptSource;
+import org.elasticsearch.script.TemplateScript;
 import org.elasticsearch.script.mustache.MustacheScriptEngine;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.test.EqualsHashCodeTestUtils;
@@ -35,12 +38,20 @@ import org.hamcrest.Matchers;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.mockito.Matchers.any;
+import static org.mockito.Matchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class TemplateRoleNameTests extends ESTestCase {
@@ -183,6 +194,44 @@ public class TemplateRoleNameTests extends ESTestCase {
         assertTrue(e.getCause() instanceof ScriptException);
     }
 
+    public void testValidateWillCompileButNotExecutePainlessScript() {
+        final TemplateScript compiledScript = mock(TemplateScript.class);
+        doThrow(new IllegalStateException("Validate should not execute painless script")).when(compiledScript).execute();
+        final TemplateScript.Factory scriptFactory = mock(TemplateScript.Factory.class);
+        when(scriptFactory.newInstance(any())).thenReturn(compiledScript);
+
+        final ScriptEngine scriptEngine = mock(ScriptEngine.class);
+        when(scriptEngine.getType()).thenReturn("painless");
+        when(scriptEngine.compile(eq("valid"), eq("params.metedata.group"), any(), eq(Map.of())))
+            .thenReturn(scriptFactory);
+        final ScriptException scriptException =
+            new ScriptException("exception", new IllegalStateException(), List.of(), "bad syntax", "painless");
+        doThrow(scriptException)
+            .when(scriptEngine).compile(eq("invalid"), eq("bad syntax"), any(), eq(Map.of()));
+
+        final ScriptService scriptService = new ScriptService(Settings.EMPTY,
+            Map.of("painless", scriptEngine), ScriptModule.CORE_CONTEXTS) {
+            @Override
+            protected StoredScriptSource getScriptFromClusterState(String id) {
+                if ("valid".equals(id)) {
+                    return new StoredScriptSource("painless", "params.metedata.group", Map.of());
+                } else {
+                    return new StoredScriptSource("painless", "bad syntax", Map.of());
+                }
+            }
+        };
+        // Validation succeeds if compilation is successful
+        new TemplateRoleName(new BytesArray("{ \"id\":\"valid\" }"), Format.STRING).validate(scriptService);
+        verify(scriptEngine, times(1))
+            .compile(eq("valid"), eq("params.metedata.group"), any(), eq(Map.of()));
+        verify(compiledScript, never()).execute();
+
+        // Validation fails if compilation fails
+        final IllegalArgumentException e = expectThrows(IllegalArgumentException.class,
+            () -> new TemplateRoleName(new BytesArray("{ \"id\":\"invalid\" }"), Format.STRING).validate(scriptService));
+        assertSame(scriptException, e.getCause());
+    }
+
     public void testValidationWillFailWhenInlineScriptIsNotEnabled() {
         final Settings settings = Settings.builder().put("script.allowed_types", ScriptService.ALLOW_NONE).build();
         final ScriptService scriptService = new ScriptService(settings,
@@ -199,12 +248,12 @@ public class TemplateRoleNameTests extends ESTestCase {
             Collections.singletonMap(MustacheScriptEngine.NAME, new MustacheScriptEngine()), ScriptModule.CORE_CONTEXTS);
         final ClusterChangedEvent clusterChangedEvent = mock(ClusterChangedEvent.class);
         final ClusterState clusterState = mock(ClusterState.class);
-        final MetaData metaData = mock(MetaData.class);
+        final Metadata metadata = mock(Metadata.class);
         final StoredScriptSource storedScriptSource = mock(StoredScriptSource.class);
-        final ScriptMetaData scriptMetaData = new ScriptMetaData.Builder(null).storeScript("foo", storedScriptSource).build();
+        final ScriptMetadata scriptMetadata = new ScriptMetadata.Builder(null).storeScript("foo", storedScriptSource).build();
         when(clusterChangedEvent.state()).thenReturn(clusterState);
-        when(clusterState.metaData()).thenReturn(metaData);
-        when(metaData.custom(ScriptMetaData.TYPE)).thenReturn(scriptMetaData);
+        when(clusterState.metadata()).thenReturn(metadata);
+        when(metadata.custom(ScriptMetadata.TYPE)).thenReturn(scriptMetadata);
         when(storedScriptSource.getLang()).thenReturn("mustache");
         when(storedScriptSource.getSource()).thenReturn("");
         when(storedScriptSource.getOptions()).thenReturn(Collections.emptyMap());
@@ -221,11 +270,11 @@ public class TemplateRoleNameTests extends ESTestCase {
             Collections.singletonMap(MustacheScriptEngine.NAME, new MustacheScriptEngine()), ScriptModule.CORE_CONTEXTS);
         final ClusterChangedEvent clusterChangedEvent = mock(ClusterChangedEvent.class);
         final ClusterState clusterState = mock(ClusterState.class);
-        final MetaData metaData = mock(MetaData.class);
-        final ScriptMetaData scriptMetaData = new ScriptMetaData.Builder(null).build();
+        final Metadata metadata = mock(Metadata.class);
+        final ScriptMetadata scriptMetadata = new ScriptMetadata.Builder(null).build();
         when(clusterChangedEvent.state()).thenReturn(clusterState);
-        when(clusterState.metaData()).thenReturn(metaData);
-        when(metaData.custom(ScriptMetaData.TYPE)).thenReturn(scriptMetaData);
+        when(clusterState.metadata()).thenReturn(metadata);
+        when(metadata.custom(ScriptMetadata.TYPE)).thenReturn(scriptMetadata);
         scriptService.applyClusterState(clusterChangedEvent);
 
         final BytesReference storedScript = new BytesArray("{ \"id\":\"foo\" }");

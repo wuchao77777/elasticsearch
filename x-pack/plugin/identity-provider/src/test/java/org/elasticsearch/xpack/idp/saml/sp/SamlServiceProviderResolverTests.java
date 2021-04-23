@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 
 package org.elasticsearch.xpack.idp.saml.sp;
@@ -18,7 +19,6 @@ import org.junit.Before;
 import org.opensaml.saml.saml2.core.NameID;
 
 import java.net.URL;
-import java.util.Map;
 import java.util.Set;
 
 import static org.hamcrest.Matchers.emptyIterable;
@@ -45,7 +45,7 @@ public class SamlServiceProviderResolverTests extends ESTestCase {
         index = mock(SamlServiceProviderIndex.class);
         identityProvider = mock(SamlIdentityProvider.class);
         serviceProviderDefaults = configureIdentityProviderDefaults();
-        resolver = new SamlServiceProviderResolver(Settings.EMPTY, index, serviceProviderDefaults);
+        resolver = new SamlServiceProviderResolver(Settings.EMPTY, index, new SamlServiceProviderFactory(serviceProviderDefaults));
     }
 
     public void testResolveWithoutCache() throws Exception {
@@ -56,7 +56,7 @@ public class SamlServiceProviderResolverTests extends ESTestCase {
         final String principalAttribute = randomAlphaOfLengthBetween(6, 36);
         final String rolesAttribute = randomAlphaOfLengthBetween(6, 36);
         final String resource = "ece:" + randomAlphaOfLengthBetween(6, 12);
-        final Map<String, String> rolePrivileges = Map.of(randomAlphaOfLengthBetween(3, 6), "role:" + randomAlphaOfLengthBetween(4, 8));
+        final Set<String> rolePrivileges = Set.of("role:(.*)");
 
         final DocumentVersion docVersion = new DocumentVersion(
             randomAlphaOfLength(12), randomNonNegativeLong(), randomNonNegativeLong());
@@ -65,7 +65,7 @@ public class SamlServiceProviderResolverTests extends ESTestCase {
         document.setAuthenticationExpiry(null);
         document.setAcs(acs.toString());
         document.privileges.setResource(resource);
-        document.privileges.setRoleActions(rolePrivileges);
+        document.privileges.setRolePatterns(rolePrivileges);
         document.attributeNames.setPrincipal(principalAttribute);
         document.attributeNames.setRoles(rolesAttribute);
 
@@ -89,12 +89,14 @@ public class SamlServiceProviderResolverTests extends ESTestCase {
         assertThat(serviceProvider.getPrivileges(), notNullValue());
         assertThat(serviceProvider.getPrivileges().getApplicationName(), equalTo(serviceProviderDefaults.applicationName));
         assertThat(serviceProvider.getPrivileges().getResource(), equalTo(resource));
-        assertThat(serviceProvider.getPrivileges().getRoleActions(), equalTo(rolePrivileges));
+        assertThat(serviceProvider.getPrivileges().getRoleMapping(), notNullValue());
+        assertThat(serviceProvider.getPrivileges().getRoleMapping().apply("role:foo"), equalTo(Set.of("foo")));
+        assertThat(serviceProvider.getPrivileges().getRoleMapping().apply("foo:bar"), equalTo(Set.of()));
     }
 
     public void testResolveReturnsCachedObject() throws Exception {
-        final SamlServiceProviderDocument document1 = SamlServiceProviderIndexTests.randomDocument(1);
-        final SamlServiceProviderDocument document2 = SamlServiceProviderIndexTests.randomDocument(2);
+        final SamlServiceProviderDocument document1 = SamlServiceProviderTestUtils.randomDocument(1);
+        final SamlServiceProviderDocument document2 = SamlServiceProviderTestUtils.randomDocument(2);
         document2.entityId = document1.entityId;
 
         final DocumentVersion docVersion = new DocumentVersion(randomAlphaOfLength(12), 1, 1);
@@ -109,8 +111,8 @@ public class SamlServiceProviderResolverTests extends ESTestCase {
     }
 
     public void testResolveIgnoresCacheWhenDocumentVersionChanges() throws Exception {
-        final SamlServiceProviderDocument document1 = SamlServiceProviderIndexTests.randomDocument(1);
-        final SamlServiceProviderDocument document2 = SamlServiceProviderIndexTests.randomDocument(2);
+        final SamlServiceProviderDocument document1 = SamlServiceProviderTestUtils.randomDocument(1);
+        final SamlServiceProviderDocument document2 = SamlServiceProviderTestUtils.randomDocument(2);
         document2.entityId = document1.entityId;
 
         final DocumentVersion docVersion1 = new DocumentVersion(randomAlphaOfLength(12), 1, 1);

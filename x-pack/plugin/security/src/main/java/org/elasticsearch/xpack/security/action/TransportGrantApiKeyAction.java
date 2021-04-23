@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 
 package org.elasticsearch.xpack.security.action;
@@ -15,7 +16,7 @@ import org.elasticsearch.common.util.concurrent.ThreadContext;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.transport.TransportMessage;
+import org.elasticsearch.transport.TransportRequest;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.core.security.action.CreateApiKeyResponse;
 import org.elasticsearch.xpack.core.security.action.GrantApiKeyAction;
@@ -69,11 +70,12 @@ public final class TransportGrantApiKeyAction extends HandledTransportAction<Gra
         }
     }
 
-    private void resolveAuthentication(GrantApiKeyRequest.Grant grant, TransportMessage message, ActionListener<Authentication> listener) {
+    private void resolveAuthentication(GrantApiKeyRequest.Grant grant, TransportRequest transportRequest,
+                                       ActionListener<Authentication> listener) {
         switch (grant.getType()) {
             case GrantApiKeyRequest.PASSWORD_GRANT_TYPE:
                 final UsernamePasswordToken token = new UsernamePasswordToken(grant.getUsername(), grant.getPassword());
-                authenticationService.authenticate(super.actionName, message, token, listener);
+                authenticationService.authenticate(super.actionName, transportRequest, token, listener);
                 return;
             case GrantApiKeyRequest.ACCESS_TOKEN_GRANT_TYPE:
                 tokenService.authenticateToken(grant.getAccessToken(), listener);

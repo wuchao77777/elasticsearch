@@ -1,6 +1,0 @@
-# A basic role that is used to call the IdP's APIs
-idp_role:
-  cluster:
-    - monitor
-    - "cluster:admin/idp/*"
-

@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 
 package org.elasticsearch.xpack.analytics.topmetrics;
@@ -9,6 +10,7 @@ package org.elasticsearch.xpack.analytics.topmetrics;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.LatLonDocValuesField;
 import org.apache.lucene.document.SortedNumericDocValuesField;
+import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexableField;
@@ -28,10 +30,10 @@ import org.apache.lucene.util.NumericUtils;
 import org.elasticsearch.common.CheckedConsumer;
 import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.breaker.CircuitBreakingException;
-import org.elasticsearch.common.breaker.NoopCircuitBreaker;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.util.MockBigArrays;
 import org.elasticsearch.index.fielddata.ScriptDocValues;
 import org.elasticsearch.index.mapper.GeoPointFieldMapper;
 import org.elasticsearch.index.mapper.MappedFieldType;
@@ -39,6 +41,7 @@ import org.elasticsearch.index.mapper.NumberFieldMapper;
 import org.elasticsearch.index.mapper.NumberFieldMapper.NumberType;
 import org.elasticsearch.index.mapper.TextFieldMapper;
 import org.elasticsearch.indices.breaker.CircuitBreakerService;
+import org.elasticsearch.plugins.SearchPlugin;
 import org.elasticsearch.script.MockScriptEngine;
 import org.elasticsearch.script.Script;
 import org.elasticsearch.script.ScriptEngine;
@@ -49,13 +52,14 @@ import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.search.aggregations.AggregationBuilder;
 import org.elasticsearch.search.aggregations.Aggregator;
 import org.elasticsearch.search.aggregations.AggregatorTestCase;
+import org.elasticsearch.search.aggregations.CardinalityUpperBound;
 import org.elasticsearch.search.aggregations.InternalAggregation;
 import org.elasticsearch.search.aggregations.LeafBucketCollector;
-import org.elasticsearch.search.aggregations.MultiBucketConsumerService.MultiBucketConsumer;
+import org.elasticsearch.search.aggregations.MultiBucketConsumerService;
 import org.elasticsearch.search.aggregations.bucket.terms.Terms;
 import org.elasticsearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
+import org.elasticsearch.search.aggregations.support.AggregationContext;
 import org.elasticsearch.search.aggregations.support.MultiValuesSourceFieldConfig;
-import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.search.sort.FieldSortBuilder;
 import org.elasticsearch.search.sort.GeoDistanceSortBuilder;
 import org.elasticsearch.search.sort.ScoreSortBuilder;
@@ -64,9 +68,11 @@ import org.elasticsearch.search.sort.ScriptSortBuilder.ScriptSortType;
 import org.elasticsearch.search.sort.SortBuilder;
 import org.elasticsearch.search.sort.SortOrder;
 import org.elasticsearch.search.sort.SortValue;
+import org.elasticsearch.xpack.analytics.AnalyticsPlugin;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -327,26 +333,7 @@ public class TopMetricsAggregatorTests extends AggregatorTestCase {
         // Build a "simple" circuit breaker that trips at 20k
         CircuitBreakerService breaker = mock(CircuitBreakerService.class);
         ByteSizeValue max = new ByteSizeValue(20, ByteSizeUnit.KB);
-        when(breaker.getBreaker(CircuitBreaker.REQUEST)).thenReturn(new NoopCircuitBreaker(CircuitBreaker.REQUEST) {
-            private long total = 0;
-
-            @Override
-            public double addEstimateBytesAndMaybeBreak(long bytes, String label) throws CircuitBreakingException {
-                logger.debug("Used {} grabbing {} for {}", total, bytes, label);
-                total += bytes;
-                if (total > max.getBytes()) {
-                    throw new CircuitBreakingException("test error", bytes, max.getBytes(), Durability.TRANSIENT);
-                }
-                return total;
-            }
-
-            @Override
-            public long addWithoutBreaking(long bytes) {
-                logger.debug("Used {} grabbing {}", total, bytes);
-                total += bytes;
-                return total;
-            }
-        });
+        when(breaker.getBreaker(CircuitBreaker.REQUEST)).thenReturn(new MockBigArrays.LimitedBreaker(CircuitBreaker.REQUEST, max));
 
         // Collect some buckets with it
         try (Directory directory = newDirectory()) {
@@ -356,11 +343,17 @@ public class TopMetricsAggregatorTests extends AggregatorTestCase {
 
             try (IndexReader indexReader = DirectoryReader.open(directory)) {
                 IndexSearcher indexSearcher = newSearcher(indexReader, false, false);
-                SearchContext searchContext = createSearchContext(indexSearcher, createIndexSettings(), new MatchAllDocsQuery(),
-                        new MultiBucketConsumer(Integer.MAX_VALUE, breaker.getBreaker(CircuitBreaker.REQUEST)), breaker, doubleFields());
                 TopMetricsAggregationBuilder builder = simpleBuilder(new FieldSortBuilder("s").order(SortOrder.ASC));
-                Aggregator aggregator = builder.build(searchContext.getQueryShardContext(), null)
-                    .create(searchContext, null, true);
+                AggregationContext context = createAggregationContext(
+                    indexSearcher,
+                    createIndexSettings(),
+                    new MatchAllDocsQuery(),
+                    breaker,
+                    builder.bytesToPreallocate(),
+                    MultiBucketConsumerService.DEFAULT_MAX_BUCKETS,
+                    doubleFields()
+                );
+                Aggregator aggregator = builder.build(context, null).create(null, CardinalityUpperBound.ONE);
                 aggregator.preCollection();
                 assertThat(indexReader.leaves(), hasSize(1));
                 LeafBucketCollector leaf = aggregator.getLeafCollector(indexReader.leaves().get(0));
@@ -377,7 +370,7 @@ public class TopMetricsAggregatorTests extends AggregatorTestCase {
                  * BigArrays allocates the new array before freeing the old one.
                  * That causes us to trip when we're about 2/3 of the way to the
                  * limit. And 2/3 of 190 is 126. Which is pretty much what we
-                 * expect. Sort of. 
+                 * expect. Sort of.
                  */
                 int bucketThatBreaks = 646;
                 for (int b = 0; b < bucketThatBreaks; b++) {
@@ -476,22 +469,15 @@ public class TopMetricsAggregatorTests extends AggregatorTestCase {
     }
 
     private MappedFieldType numberFieldType(NumberType numberType, String name) {
-        NumberFieldMapper.NumberFieldType type = new NumberFieldMapper.NumberFieldType(numberType);
-        type.setName(name);
-        return type;
+        return new NumberFieldMapper.NumberFieldType(name, numberType);
     }
 
     private MappedFieldType textFieldType(String name) {
-        TextFieldMapper.TextFieldType type = new TextFieldMapper.TextFieldType();
-        type.setName(name);
-        return type;
+        return new TextFieldMapper.TextFieldType(name);
     }
 
     private MappedFieldType geoPointFieldType(String name) {
-        GeoPointFieldMapper.GeoPointFieldType type = new GeoPointFieldMapper.GeoPointFieldType();
-        type.setName(name);
-        type.setHasDocValues(true);
-        return type;
+        return new GeoPointFieldMapper.GeoPointFieldType(name);
     }
 
     private IndexableField doubleField(String name, double value) {
@@ -507,7 +493,7 @@ public class TopMetricsAggregatorTests extends AggregatorTestCase {
     }
 
     private IndexableField textField(String name, String value) {
-        return new Field(name, value, textFieldType(name));
+        return new TextField(name, value, Field.Store.NO);
     }
 
     private IndexableField geoPointField(String name, double lat, double lon) {
@@ -533,7 +519,9 @@ public class TopMetricsAggregatorTests extends AggregatorTestCase {
 
             try (IndexReader indexReader = DirectoryReader.open(directory)) {
                 IndexSearcher indexSearcher = newSearcher(indexReader, true, true);
-                return search(indexSearcher, query, builder, fields);
+                InternalAggregation agg = searchAndReduce(indexSearcher, query, builder, fields);
+                verifyOutputFieldNames(builder, agg);
+                return agg;
             }
         }
     }
@@ -583,5 +571,10 @@ public class TopMetricsAggregatorTests extends AggregatorTestCase {
                 emptyMap());
         Map<String, ScriptEngine> engines = singletonMap(scriptEngine.getType(), scriptEngine);
         return new ScriptService(Settings.EMPTY, engines, ScriptModule.CORE_CONTEXTS);
+    }
+
+    @Override
+    protected List<SearchPlugin> getSearchPlugins() {
+        return Collections.singletonList(new AnalyticsPlugin());
     }
 }

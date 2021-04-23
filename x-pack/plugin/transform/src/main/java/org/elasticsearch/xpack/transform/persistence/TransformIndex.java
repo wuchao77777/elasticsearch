@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 
 package org.elasticsearch.xpack.transform.persistence;
@@ -14,7 +15,7 @@ import org.elasticsearch.action.admin.indices.alias.Alias;
 import org.elasticsearch.action.admin.indices.create.CreateIndexAction;
 import org.elasticsearch.action.admin.indices.create.CreateIndexRequest;
 import org.elasticsearch.client.Client;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.xpack.core.transform.TransformField;
 import org.elasticsearch.xpack.core.transform.TransformMessages;
@@ -25,6 +26,9 @@ import java.time.Clock;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+
+import static java.util.Collections.singletonMap;
+import static java.util.stream.Collectors.toMap;
 
 public final class TransformIndex {
     private static final Logger logger = LogManager.getLogger(TransformIndex.class);
@@ -66,7 +70,7 @@ public final class TransformIndex {
     public static TransformDestIndexSettings createTransformDestIndexSettings(Map<String, String> mappings, String id, Clock clock) {
         Map<String, Object> indexMappings = new HashMap<>();
         indexMappings.put(PROPERTIES, createMappingsFromStringMap(mappings));
-        indexMappings.put(META, createMetaData(id, clock));
+        indexMappings.put(META, createMetadata(id, clock));
 
         Settings settings = createSettings();
 
@@ -89,18 +93,18 @@ public final class TransformIndex {
      *   }
      * }
      */
-    private static Map<String, Object> createMetaData(String id, Clock clock) {
+    private static Map<String, Object> createMetadata(String id, Clock clock) {
 
-        Map<String, Object> metaData = new HashMap<>();
-        metaData.put(TransformField.CREATED_BY, TransformField.TRANSFORM_SIGNATURE);
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put(TransformField.CREATED_BY, TransformField.TRANSFORM_SIGNATURE);
 
-        Map<String, Object> transformMetaData = new HashMap<>();
-        transformMetaData.put(TransformField.CREATION_DATE_MILLIS, clock.millis());
-        transformMetaData.put(TransformField.VERSION.getPreferredName(), Map.of(TransformField.CREATED, Version.CURRENT));
-        transformMetaData.put(TransformField.TRANSFORM, id);
+        Map<String, Object> transformMetadata = new HashMap<>();
+        transformMetadata.put(TransformField.CREATION_DATE_MILLIS, clock.millis());
+        transformMetadata.put(TransformField.VERSION.getPreferredName(), Map.of(TransformField.CREATED, Version.CURRENT.toString()));
+        transformMetadata.put(TransformField.TRANSFORM, id);
 
-        metaData.put(TransformField.META_FIELDNAME, transformMetaData);
-        return metaData;
+        metadata.put(TransformField.META_FIELDNAME, transformMetadata);
+        return metadata;
     }
 
     /**
@@ -109,8 +113,8 @@ public final class TransformIndex {
      */
     private static Settings createSettings() {
         return Settings.builder() // <1>
-            .put(IndexMetaData.SETTING_NUMBER_OF_SHARDS, 1)
-            .put(IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS, "0-1")
+            .put(IndexMetadata.SETTING_NUMBER_OF_SHARDS, 1)
+            .put(IndexMetadata.SETTING_AUTO_EXPAND_REPLICAS, "0-1")
             .build();
     }
 
@@ -134,10 +138,8 @@ public final class TransformIndex {
      * }
      * @param mappings A Map of the form {"fieldName": "fieldType"}
      */
-    private static Map<String, Object> createMappingsFromStringMap(Map<String, String> mappings) {
-        Map<String, Object> fieldMappings = new HashMap<>();
-        mappings.forEach((k, v) -> fieldMappings.put(k, Map.of("type", v)));
-
-        return fieldMappings;
+    static Map<String, Object> createMappingsFromStringMap(Map<String, String> mappings) {
+        return mappings.entrySet().stream()
+            .collect(toMap(e -> e.getKey(), e -> singletonMap("type", e.getValue())));
     }
 }

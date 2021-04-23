@@ -1,31 +1,22 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 package org.elasticsearch.cluster.coordination;
 
 import org.apache.logging.log4j.message.ParameterizedMessage;
+import org.elasticsearch.Build;
 import org.elasticsearch.Version;
+import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ESAllocationTestCase;
 import org.elasticsearch.cluster.block.ClusterBlocks;
-import org.elasticsearch.cluster.coordination.CoordinationMetaData.VotingConfiguration;
-import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.coordination.CoordinationMetadata.VotingConfiguration;
+import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodeRole;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
@@ -37,6 +28,8 @@ import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.concurrent.BaseFuture;
 import org.elasticsearch.common.util.concurrent.FutureUtils;
+import org.elasticsearch.monitor.NodeHealthService;
+import org.elasticsearch.monitor.StatusInfo;
 import org.elasticsearch.node.Node;
 import org.elasticsearch.test.ClusterServiceUtils;
 import org.elasticsearch.test.ESTestCase;
@@ -44,8 +37,8 @@ import org.elasticsearch.test.transport.CapturingTransport;
 import org.elasticsearch.threadpool.TestThreadPool;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.RequestHandlerRegistry;
+import org.elasticsearch.transport.TestTransportChannel;
 import org.elasticsearch.transport.Transport;
-import org.elasticsearch.transport.TransportChannel;
 import org.elasticsearch.transport.TransportRequest;
 import org.elasticsearch.transport.TransportResponse;
 import org.elasticsearch.transport.TransportService;
@@ -71,6 +64,7 @@ import java.util.stream.Stream;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.singletonList;
+import static org.elasticsearch.monitor.StatusInfo.Status.HEALTHY;
 import static org.elasticsearch.transport.TransportService.HANDSHAKE_ACTION_NAME;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
@@ -108,9 +102,9 @@ public class NodeJoinTests extends ESTestCase {
             .nodes(DiscoveryNodes.builder()
                 .add(localNode)
                 .localNodeId(localNode.getId()))
-            .metaData(MetaData.builder()
-                    .coordinationMetaData(
-                        CoordinationMetaData.builder()
+            .metadata(Metadata.builder()
+                    .coordinationMetadata(
+                        CoordinationMetadata.builder()
                         .term(term)
                         .lastAcceptedConfiguration(config)
                         .lastCommittedConfiguration(config)
@@ -119,13 +113,13 @@ public class NodeJoinTests extends ESTestCase {
             .blocks(ClusterBlocks.EMPTY_CLUSTER_BLOCK).build();
     }
 
-    private void setupFakeMasterServiceAndCoordinator(long term, ClusterState initialState) {
+    private void setupFakeMasterServiceAndCoordinator(long term, ClusterState initialState, NodeHealthService nodeHealthService) {
         deterministicTaskQueue
             = new DeterministicTaskQueue(Settings.builder().put(Node.NODE_NAME_SETTING.getKey(), "test").build(), random());
         final ThreadPool fakeThreadPool = deterministicTaskQueue.getThreadPool();
         FakeThreadPoolMasterService fakeMasterService = new FakeThreadPoolMasterService("test_node","test",
             fakeThreadPool, deterministicTaskQueue::scheduleNow);
-        setupMasterServiceAndCoordinator(term, initialState, fakeMasterService, fakeThreadPool, Randomness.get());
+        setupMasterServiceAndCoordinator(term, initialState, fakeMasterService, fakeThreadPool, Randomness.get(), nodeHealthService);
         fakeMasterService.setClusterStatePublisher((event, publishListener, ackListener) -> {
             coordinator.handlePublishRequest(new PublishRequest(event.state()));
             publishListener.onResponse(null);
@@ -141,13 +135,14 @@ public class NodeJoinTests extends ESTestCase {
             clusterStateRef.set(event.state());
             publishListener.onResponse(null);
         });
-        setupMasterServiceAndCoordinator(term, initialState, masterService, threadPool, new Random(Randomness.get().nextLong()));
+        setupMasterServiceAndCoordinator(term, initialState, masterService, threadPool, new Random(Randomness.get().nextLong()),
+            () -> new StatusInfo(HEALTHY, "healthy-info"));
         masterService.setClusterStateSupplier(clusterStateRef::get);
         masterService.start();
     }
 
     private void setupMasterServiceAndCoordinator(long term, ClusterState initialState, MasterService masterService,
-                                                  ThreadPool threadPool, Random random) {
+                                                  ThreadPool threadPool, Random random, NodeHealthService nodeHealthService) {
         if (this.masterService != null || coordinator != null) {
             throw new IllegalStateException("method setupMasterServiceAndCoordinator can only be called once");
         }
@@ -156,8 +151,12 @@ public class NodeJoinTests extends ESTestCase {
             @Override
             protected void onSendRequest(long requestId, String action, TransportRequest request, DiscoveryNode destination) {
                 if (action.equals(HANDSHAKE_ACTION_NAME)) {
-                    handleResponse(requestId, new TransportService.HandshakeResponse(destination, initialState.getClusterName(),
-                        destination.getVersion()));
+                    handleResponse(requestId, new TransportService.HandshakeResponse(
+                            destination.getVersion(),
+                            Build.CURRENT.hash(),
+                            destination,
+                            initialState.getClusterName()
+                    ));
                 } else if (action.equals(JoinHelper.VALIDATE_JOIN_ACTION_NAME)) {
                     handleResponse(requestId, new TransportResponse.Empty());
                 } else {
@@ -177,7 +176,7 @@ public class NodeJoinTests extends ESTestCase {
             () -> new InMemoryPersistedState(term, initialState), r -> emptyList(),
             new NoOpClusterApplier(),
             Collections.emptyList(),
-            random, (s, p, r) -> {}, ElectionStrategy.DEFAULT_INSTANCE);
+            random, (s, p, r) -> {}, ElectionStrategy.DEFAULT_INSTANCE, nodeHealthService);
         transportService.start();
         transportService.acceptIncomingRequests();
         transport = capturingTransport;
@@ -227,31 +226,24 @@ public class NodeJoinTests extends ESTestCase {
         // clone the node before submitting to simulate an incoming join, which is guaranteed to have a new
         // disco node object serialized off the network
         try {
-            final RequestHandlerRegistry<JoinRequest> joinHandler = (RequestHandlerRegistry<JoinRequest>)
-                transport.getRequestHandler(JoinHelper.JOIN_ACTION_NAME);
-            joinHandler.processMessageReceived(joinRequest, new TransportChannel() {
-                @Override
-                public String getProfileName() {
-                    return "dummy";
-                }
+            final RequestHandlerRegistry<JoinRequest> joinHandler = transport.getRequestHandlers()
+                .getHandler(JoinHelper.JOIN_ACTION_NAME);
+            final ActionListener<TransportResponse> listener = new ActionListener<>() {
 
                 @Override
-                public String getChannelType() {
-                    return "dummy";
-                }
-
-                @Override
-                public void sendResponse(TransportResponse response) {
+                public void onResponse(TransportResponse transportResponse) {
                     logger.debug("{} completed", future);
                     future.markAsDone();
                 }
 
                 @Override
-                public void sendResponse(Exception e) {
+                public void onFailure(Exception e) {
                     logger.error(() -> new ParameterizedMessage("unexpected error for {}", future), e);
                     future.markAsFailed(e);
                 }
-            });
+            };
+
+            joinHandler.processMessageReceived(joinRequest, new TestTransportChannel(listener));
         } catch (Exception e) {
             logger.error(() -> new ParameterizedMessage("unexpected error for {}", future), e);
             future.markAsFailed(e);
@@ -276,7 +268,8 @@ public class NodeJoinTests extends ESTestCase {
         long initialTerm = randomLongBetween(1, 10);
         long initialVersion = randomLongBetween(1, 10);
         setupFakeMasterServiceAndCoordinator(initialTerm, initialState(node0, initialTerm, initialVersion,
-            new VotingConfiguration(Collections.singleton(randomFrom(node0, node1).getId()))));
+            VotingConfiguration.of(randomFrom(node0, node1))),
+            () -> new StatusInfo(HEALTHY, "healthy-info"));
         assertFalse(isLocalNodeElectedMaster());
         assertNull(coordinator.getStateForMasterService().nodes().getMasterNodeId());
         long newTerm = initialTerm + randomLongBetween(1, 10);
@@ -296,7 +289,7 @@ public class NodeJoinTests extends ESTestCase {
         long initialTerm = randomLongBetween(1, 10);
         long initialVersion = randomLongBetween(1, 10);
         setupFakeMasterServiceAndCoordinator(initialTerm, initialState(node0, initialTerm, initialVersion,
-            new VotingConfiguration(Collections.singleton(node1.getId()))));
+            VotingConfiguration.of(node1)), () -> new StatusInfo(HEALTHY, "healthy-info"));
         assertFalse(isLocalNodeElectedMaster());
         long newTerm = initialTerm + randomLongBetween(1, 10);
         long higherVersion = initialVersion + randomLongBetween(1, 10);
@@ -312,7 +305,7 @@ public class NodeJoinTests extends ESTestCase {
         long initialTerm = randomLongBetween(1, 10);
         long initialVersion = randomLongBetween(1, 10);
         setupFakeMasterServiceAndCoordinator(initialTerm, initialState(node0, initialTerm, initialVersion,
-            new VotingConfiguration(Collections.singleton(node0.getId()))));
+            VotingConfiguration.of(node0)), () -> new StatusInfo(HEALTHY, "healthy-info"));
         assertFalse(isLocalNodeElectedMaster());
         long newTerm = initialTerm + randomLongBetween(1, 10);
         long higherVersion = initialVersion + randomLongBetween(1, 10);
@@ -326,7 +319,7 @@ public class NodeJoinTests extends ESTestCase {
         long initialTerm = randomLongBetween(1, 10);
         long initialVersion = randomLongBetween(1, 10);
         setupFakeMasterServiceAndCoordinator(initialTerm, initialState(node0, initialTerm, initialVersion,
-            new VotingConfiguration(Collections.singleton(node0.getId()))));
+            VotingConfiguration.of(node0)), () -> new StatusInfo(HEALTHY, "healthy-info"));
         assertFalse(isLocalNodeElectedMaster());
         long newTerm = initialTerm + randomLongBetween(1, 10);
         joinNodeAndRun(new JoinRequest(node0, newTerm, Optional.of(new Join(node0, node0, newTerm, initialTerm, initialVersion))));
@@ -343,7 +336,7 @@ public class NodeJoinTests extends ESTestCase {
         long initialTerm = randomLongBetween(1, 10);
         long initialVersion = randomLongBetween(1, 10);
         setupFakeMasterServiceAndCoordinator(initialTerm, initialState(node0, initialTerm, initialVersion,
-            new VotingConfiguration(Collections.singleton(node0.getId()))));
+            VotingConfiguration.of(node0)), () -> new StatusInfo(HEALTHY, "healthy-info"));
         long newTerm = initialTerm + randomLongBetween(1, 10);
 
         joinNodeAndRun(new JoinRequest(node0, newTerm, Optional.of(new Join(node0, node0, newTerm, initialTerm, initialVersion))));
@@ -362,7 +355,7 @@ public class NodeJoinTests extends ESTestCase {
         long initialTerm = randomLongBetween(1, 10);
         long initialVersion = randomLongBetween(1, 10);
         setupFakeMasterServiceAndCoordinator(initialTerm, initialState(node0, initialTerm, initialVersion,
-            new VotingConfiguration(Collections.singleton(node2.getId()))));
+            VotingConfiguration.of(node2)), () -> new StatusInfo(HEALTHY, "healthy-info"));
         assertFalse(isLocalNodeElectedMaster());
         long newTerm = initialTerm + randomLongBetween(1, 10);
         SimpleFuture futNode0 = joinNodeAsync(new JoinRequest(node0, newTerm, Optional.of(
@@ -389,7 +382,7 @@ public class NodeJoinTests extends ESTestCase {
         long initialTerm = randomLongBetween(1, 10);
         long initialVersion = randomLongBetween(1, 10);
         setupFakeMasterServiceAndCoordinator(initialTerm, initialState(node0, initialTerm, initialVersion,
-            new VotingConfiguration(Collections.singleton(node0.getId()))));
+            VotingConfiguration.of(node0)), () -> new StatusInfo(HEALTHY, "healthy-info"));
         long newTerm = initialTerm + randomLongBetween(1, 10);
         handleStartJoinFrom(node1, newTerm);
         handleFollowerCheckFrom(node1, newTerm);
@@ -399,60 +392,81 @@ public class NodeJoinTests extends ESTestCase {
         assertTrue(isLocalNodeElectedMaster());
     }
 
+    public void testJoinUpdateVotingConfigExclusion() throws Exception {
+        DiscoveryNode initialNode = newNode(0, true);
+        long initialTerm = randomLongBetween(1, 10);
+        long initialVersion = randomLongBetween(1, 10);
+
+        CoordinationMetadata.VotingConfigExclusion votingConfigExclusion = new CoordinationMetadata.VotingConfigExclusion(
+                                                        CoordinationMetadata.VotingConfigExclusion.MISSING_VALUE_MARKER, "knownNodeName");
+
+        setupFakeMasterServiceAndCoordinator(initialTerm, buildStateWithVotingConfigExclusion(initialNode, initialTerm,
+            initialVersion, votingConfigExclusion),
+            () -> new StatusInfo(HEALTHY, "healthy-info"));
+
+        DiscoveryNode knownJoiningNode = new DiscoveryNode("knownNodeName", "newNodeId", buildNewFakeTransportAddress(),
+                                                            emptyMap(), Set.of(DiscoveryNodeRole.MASTER_ROLE), Version.CURRENT);
+        long newTerm = initialTerm + randomLongBetween(1, 10);
+        long newerTerm = newTerm + randomLongBetween(1, 10);
+
+        joinNodeAndRun(new JoinRequest(knownJoiningNode, initialTerm,
+            Optional.of(new Join(knownJoiningNode, initialNode, newerTerm, initialTerm, initialVersion))));
+
+        assertTrue(MasterServiceTests.discoveryState(masterService).getVotingConfigExclusions().stream().anyMatch(exclusion -> {
+            return "knownNodeName".equals(exclusion.getNodeName()) && "newNodeId".equals(exclusion.getNodeId());
+        }));
+    }
+
+    private ClusterState buildStateWithVotingConfigExclusion(DiscoveryNode initialNode,
+                                                             long initialTerm,
+                                                             long initialVersion,
+                                                             CoordinationMetadata.VotingConfigExclusion votingConfigExclusion) {
+        ClusterState initialState = initialState(initialNode, initialTerm, initialVersion,
+                                                    new VotingConfiguration(Collections.singleton(initialNode.getId())));
+        Metadata newMetadata = Metadata.builder(initialState.metadata())
+                                        .coordinationMetadata(CoordinationMetadata.builder(initialState.coordinationMetadata())
+                                                                                    .addVotingConfigExclusion(votingConfigExclusion)
+                                                                                    .build())
+                                        .build();
+
+        return ClusterState.builder(initialState).metadata(newMetadata).build();
+    }
+
     private void handleStartJoinFrom(DiscoveryNode node, long term) throws Exception {
-        final RequestHandlerRegistry<StartJoinRequest> startJoinHandler = (RequestHandlerRegistry<StartJoinRequest>)
-            transport.getRequestHandler(JoinHelper.START_JOIN_ACTION_NAME);
-        startJoinHandler.processMessageReceived(new StartJoinRequest(node, term), new TransportChannel() {
+        final RequestHandlerRegistry<StartJoinRequest> startJoinHandler = transport.getRequestHandlers()
+            .getHandler(JoinHelper.START_JOIN_ACTION_NAME);
+        startJoinHandler.processMessageReceived(new StartJoinRequest(node, term), new TestTransportChannel(new ActionListener<>() {
             @Override
-            public String getProfileName() {
-                return "dummy";
-            }
-
-            @Override
-            public String getChannelType() {
-                return "dummy";
-            }
-
-            @Override
-            public void sendResponse(TransportResponse response) {
+            public void onResponse(TransportResponse transportResponse) {
 
             }
 
             @Override
-            public void sendResponse(Exception exception) {
+            public void onFailure(Exception e) {
                 fail();
             }
-        });
+        }));
         deterministicTaskQueue.runAllRunnableTasks();
         assertFalse(isLocalNodeElectedMaster());
         assertThat(coordinator.getMode(), equalTo(Coordinator.Mode.CANDIDATE));
     }
 
     private void handleFollowerCheckFrom(DiscoveryNode node, long term) throws Exception {
-        final RequestHandlerRegistry<FollowersChecker.FollowerCheckRequest> followerCheckHandler =
-            (RequestHandlerRegistry<FollowersChecker.FollowerCheckRequest>)
-            transport.getRequestHandler(FollowersChecker.FOLLOWER_CHECK_ACTION_NAME);
-        followerCheckHandler.processMessageReceived(new FollowersChecker.FollowerCheckRequest(term, node), new TransportChannel() {
+        final RequestHandlerRegistry<FollowersChecker.FollowerCheckRequest> followerCheckHandler = transport.getRequestHandlers()
+            .getHandler(FollowersChecker.FOLLOWER_CHECK_ACTION_NAME);
+        final TestTransportChannel channel = new TestTransportChannel(new ActionListener<>() {
             @Override
-            public String getProfileName() {
-                return "dummy";
-            }
-
-            @Override
-            public String getChannelType() {
-                return "dummy";
-            }
-
-            @Override
-            public void sendResponse(TransportResponse response) {
+            public void onResponse(TransportResponse transportResponse) {
 
             }
 
             @Override
-            public void sendResponse(Exception exception) {
+            public void onFailure(Exception e) {
                 fail();
             }
         });
+        followerCheckHandler.processMessageReceived(new FollowersChecker.FollowerCheckRequest(term, node), channel);
+        // Will throw exception if failed
         deterministicTaskQueue.runAllRunnableTasks();
         assertFalse(isLocalNodeElectedMaster());
         assertThat(coordinator.getMode(), equalTo(Coordinator.Mode.FOLLOWER));
@@ -464,7 +478,7 @@ public class NodeJoinTests extends ESTestCase {
         long initialTerm = randomLongBetween(1, 10);
         long initialVersion = randomLongBetween(1, 10);
         setupFakeMasterServiceAndCoordinator(initialTerm, initialState(node0, initialTerm, initialVersion,
-            new VotingConfiguration(Collections.singleton(node0.getId()))));
+            VotingConfiguration.of(node0)), () -> new StatusInfo(HEALTHY, "healthy-info"));
         long newTerm = initialTerm + randomLongBetween(1, 10);
         handleStartJoinFrom(node1, newTerm);
         handleFollowerCheckFrom(node1, newTerm);
@@ -480,7 +494,7 @@ public class NodeJoinTests extends ESTestCase {
         long initialTerm = randomLongBetween(1, 10);
         long initialVersion = randomLongBetween(1, 10);
         setupFakeMasterServiceAndCoordinator(initialTerm, initialState(node0, initialTerm, initialVersion,
-            new VotingConfiguration(Collections.singleton(node1.getId()))));
+            VotingConfiguration.of(node1)), () -> new StatusInfo(HEALTHY, "healthy-info"));
         long newTerm = initialTerm + randomLongBetween(1, 10);
         SimpleFuture fut = joinNodeAsync(new JoinRequest(node0, newTerm,
             Optional.of(new Join(node0, node0, newTerm, initialTerm, initialVersion))));

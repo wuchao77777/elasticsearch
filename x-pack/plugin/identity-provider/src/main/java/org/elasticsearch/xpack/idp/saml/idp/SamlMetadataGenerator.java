@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.idp.saml.idp;
 
@@ -41,8 +42,8 @@ public class SamlMetadataGenerator {
         SamlInit.initialize();
     }
 
-    public void generateMetadata(String spEntityId, ActionListener<SamlMetadataResponse> listener) {
-        idp.getRegisteredServiceProvider(spEntityId, true, ActionListener.wrap(
+    public void generateMetadata(String spEntityId, String acs, ActionListener<SamlMetadataResponse> listener) {
+        idp.resolveServiceProvider(spEntityId, acs, true, ActionListener.wrap(
             sp -> {
                 try {
                     if (null == sp) {

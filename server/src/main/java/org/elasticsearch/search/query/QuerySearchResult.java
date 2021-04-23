@@ -1,29 +1,12 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.search.query;
-
-import static java.util.Collections.emptyList;
-import static org.elasticsearch.common.lucene.Lucene.readTopDocs;
-import static org.elasticsearch.common.lucene.Lucene.writeTopDocs;
-
-import java.io.IOException;
 
 import org.apache.lucene.search.FieldDoc;
 import org.apache.lucene.search.TotalHits;
@@ -33,14 +16,20 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.lucene.search.TopDocsAndMaxScore;
 import org.elasticsearch.search.DocValueFormat;
+import org.elasticsearch.search.RescoreDocIds;
 import org.elasticsearch.search.SearchPhaseResult;
 import org.elasticsearch.search.SearchShardTarget;
 import org.elasticsearch.search.aggregations.InternalAggregation;
 import org.elasticsearch.search.aggregations.InternalAggregations;
-import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
-import org.elasticsearch.search.internal.SearchContextId;
+import org.elasticsearch.search.internal.ShardSearchContextId;
+import org.elasticsearch.search.internal.ShardSearchRequest;
 import org.elasticsearch.search.profile.ProfileShardResult;
 import org.elasticsearch.search.suggest.Suggest;
+
+import java.io.IOException;
+
+import static org.elasticsearch.common.lucene.Lucene.readTopDocs;
+import static org.elasticsearch.common.lucene.Lucene.writeTopDocs;
 
 public final class QuerySearchResult extends SearchPhaseResult {
 
@@ -82,15 +71,16 @@ public final class QuerySearchResult extends SearchPhaseResult {
             isNull = false;
         }
         if (isNull == false) {
-            SearchContextId id = new SearchContextId(in);
+            ShardSearchContextId id = new ShardSearchContextId(in);
             readFromWithId(id, in);
         }
     }
 
-    public QuerySearchResult(SearchContextId id, SearchShardTarget shardTarget) {
-        this.contextId = id;
+    public QuerySearchResult(ShardSearchContextId contextId, SearchShardTarget shardTarget, ShardSearchRequest shardSearchRequest) {
+        this.contextId = contextId;
         setSearchShardTarget(shardTarget);
         isNull = false;
+        setShardSearchRequest(shardSearchRequest);
     }
 
     private QuerySearchResult(boolean isNull) {
@@ -236,6 +226,18 @@ public final class QuerySearchResult extends SearchPhaseResult {
         return hasProfileResults;
     }
 
+    public void consumeAll() {
+        if (hasProfileResults()) {
+            consumeProfileResult();
+        }
+        if (hasConsumedTopDocs() == false) {
+            consumeTopDocs();
+        }
+        if (hasAggs()) {
+            consumeAggs();
+        }
+    }
+
     /**
      * Sets the finalized profiling results for this query
      * @param shardResults The finalized profile
@@ -303,7 +305,7 @@ public final class QuerySearchResult extends SearchPhaseResult {
         return hasScoreDocs || hasSuggestHits();
     }
 
-    public void readFromWithId(SearchContextId id, StreamInput in) throws IOException {
+    public void readFromWithId(ShardSearchContextId id, StreamInput in) throws IOException {
         this.contextId = id;
         from = in.readVInt();
         size = in.readVInt();
@@ -317,18 +319,8 @@ public final class QuerySearchResult extends SearchPhaseResult {
             }
         }
         setTopDocs(readTopDocs(in));
-        if (in.getVersion().before(Version.V_7_7_0)) {
-            if (hasAggs = in.readBoolean()) {
-                aggregations = DelayableWriteable.referencing(new InternalAggregations(in));
-            }
-            if (in.getVersion().before(Version.V_7_2_0)) {
-                // The list of PipelineAggregators is sent by old versions. We don't need it anyway.
-                in.readNamedWriteableList(PipelineAggregator.class);
-            }
-        } else {
-            if (hasAggs = in.readBoolean()) {
-                aggregations = DelayableWriteable.delayed(InternalAggregations::new, in);
-            }
+        if (hasAggs = in.readBoolean()) {
+            aggregations = DelayableWriteable.delayed(InternalAggregations::readFrom, in);
         }
         if (in.readBoolean()) {
             suggest = new Suggest(in);
@@ -339,6 +331,10 @@ public final class QuerySearchResult extends SearchPhaseResult {
         hasProfileResults = profileShardResults != null;
         serviceTimeEWMA = in.readZLong();
         nodeQueueSize = in.readInt();
+        if (in.getVersion().onOrAfter(Version.V_7_10_0)) {
+            setShardSearchRequest(in.readOptionalWriteable(ShardSearchRequest::new));
+            setRescoreDocIds(new RescoreDocIds(in));
+        }
     }
 
     @Override
@@ -364,41 +360,7 @@ public final class QuerySearchResult extends SearchPhaseResult {
             }
         }
         writeTopDocs(out, topDocsAndMaxScore);
-        if (aggregations == null) {
-            out.writeBoolean(false);
-            if (out.getVersion().before(Version.V_7_2_0)) {
-                /*
-                 * Earlier versions expect sibling pipeline aggs separately
-                 * as they used to be set to QuerySearchResult directly, while
-                 * later versions expect them in InternalAggregations. Note
-                 * that despite serializing sibling pipeline aggs as part of
-                 * InternalAggregations is supported since 6.7.0, the shards
-                 * set sibling pipeline aggs to InternalAggregations only from
-                 * 7.1 on.
-                 */
-                out.writeNamedWriteableList(emptyList());
-            }
-        } else {
-            out.writeBoolean(true);
-            if (out.getVersion().before(Version.V_7_7_0)) {
-                InternalAggregations aggs = aggregations.get();
-                aggs.writeTo(out);
-                if (out.getVersion().before(Version.V_7_2_0)) {
-                    /*
-                     * Earlier versions expect sibling pipeline aggs separately
-                     * as they used to be set to QuerySearchResult directly, while
-                     * later versions expect them in InternalAggregations. Note
-                     * that despite serializing sibling pipeline aggs as part of
-                     * InternalAggregations is supported since 6.7.0, the shards
-                     * set sibling pipeline aggs to InternalAggregations only from
-                     * 7.1 on.
-                     */
-                    out.writeNamedWriteableList(aggs.getTopLevelPipelineAggregators());
-                }
-            } else {
-                aggregations.writeTo(out);
-            }
-        }
+        out.writeOptionalWriteable(aggregations);
         if (suggest == null) {
             out.writeBoolean(false);
         } else {
@@ -410,6 +372,10 @@ public final class QuerySearchResult extends SearchPhaseResult {
         out.writeOptionalWriteable(profileShardResults);
         out.writeZLong(serviceTimeEWMA);
         out.writeInt(nodeQueueSize);
+        if (out.getVersion().onOrAfter(Version.V_7_10_0)) {
+            out.writeOptionalWriteable(getShardSearchRequest());
+            getRescoreDocIds().writeTo(out);
+        }
     }
 
     public TotalHits getTotalHits() {

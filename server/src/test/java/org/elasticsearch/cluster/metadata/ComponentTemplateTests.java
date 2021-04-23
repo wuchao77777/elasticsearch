@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.cluster.metadata;
@@ -66,7 +55,7 @@ public class ComponentTemplateTests extends AbstractDiffableSerializationTestCas
     public static ComponentTemplate randomInstance() {
         Settings settings = null;
         CompressedXContent mappings = null;
-        Map<String, AliasMetaData> aliases = null;
+        Map<String, AliasMetadata> aliases = null;
         if (randomBoolean()) {
             settings = randomSettings();
         }
@@ -85,10 +74,10 @@ public class ComponentTemplateTests extends AbstractDiffableSerializationTestCas
         return new ComponentTemplate(template, randomBoolean() ? null : randomNonNegativeLong(), meta);
     }
 
-    public static Map<String, AliasMetaData> randomAliases() {
+    public static Map<String, AliasMetadata> randomAliases() {
         String aliasName = randomAlphaOfLength(5);
-        AliasMetaData aliasMeta = AliasMetaData.builder(aliasName)
-            .filter(Collections.singletonMap(randomAlphaOfLength(2), randomAlphaOfLength(2)))
+        AliasMetadata aliasMeta = AliasMetadata.builder(aliasName)
+            .filter("{\"term\":{\"year\":" + randomIntBetween(1, 3000) + "}}")
             .routing(randomBoolean() ? null : randomAlphaOfLength(3))
             .isHidden(randomBoolean() ? null : randomBoolean())
             .writeIndex(randomBoolean() ? null : randomBoolean())
@@ -98,7 +87,7 @@ public class ComponentTemplateTests extends AbstractDiffableSerializationTestCas
 
     private static CompressedXContent randomMappings() {
         try {
-            return new CompressedXContent("{\"" + randomAlphaOfLength(3) + "\":\"" + randomAlphaOfLength(7) + "\"}");
+            return new CompressedXContent("{\"properties\":{\"" + randomAlphaOfLength(5) + "\":{\"type\":\"keyword\"}}}");
         } catch (IOException e) {
             fail("got an IO exception creating fake mappings: " + e);
             return null;
@@ -107,7 +96,12 @@ public class ComponentTemplateTests extends AbstractDiffableSerializationTestCas
 
     private static Settings randomSettings() {
         return Settings.builder()
-            .put(randomAlphaOfLength(4), randomAlphaOfLength(10))
+            .put(IndexMetadata.SETTING_BLOCKS_READ, randomBoolean())
+            .put(IndexMetadata.SETTING_BLOCKS_WRITE, randomBoolean())
+            .put(IndexMetadata.SETTING_NUMBER_OF_SHARDS, randomIntBetween(1, 10))
+            .put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, randomIntBetween(0, 5))
+            .put(IndexMetadata.SETTING_BLOCKS_WRITE, randomBoolean())
+            .put(IndexMetadata.SETTING_PRIORITY, randomIntBetween(0, 100000))
             .build();
     }
 

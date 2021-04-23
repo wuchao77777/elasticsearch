@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.idp.saml.rest.action;
 
@@ -34,6 +35,7 @@ public class RestSamlInitiateSingleSignOnAction extends IdpBaseRestHandler {
 
     static {
         PARSER.declareString(SamlInitiateSingleSignOnRequest::setSpEntityId, new ParseField("entity_id"));
+        PARSER.declareString(SamlInitiateSingleSignOnRequest::setAssertionConsumerService, new ParseField("acs"));
         PARSER.declareObject(SamlInitiateSingleSignOnRequest::setSamlAuthenticationState, (p, c) -> SamlAuthenticationState.fromXContent(p),
             new ParseField("authn_state"));
     }
@@ -65,6 +67,8 @@ public class RestSamlInitiateSingleSignOnAction extends IdpBaseRestHandler {
                         builder.startObject();
                         builder.field("post_url", response.getPostUrl());
                         builder.field("saml_response", response.getSamlResponse());
+                        builder.field("saml_status", response.getSamlStatus());
+                        builder.field("error", response.getError());
                         builder.startObject("service_provider");
                         builder.field("entity_id", response.getEntityId());
                         builder.endObject();

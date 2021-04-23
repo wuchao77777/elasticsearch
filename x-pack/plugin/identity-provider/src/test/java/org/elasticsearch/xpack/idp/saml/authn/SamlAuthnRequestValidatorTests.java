@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.idp.saml.authn;
 
@@ -82,7 +83,7 @@ public class SamlAuthnRequestValidatorTests extends IdpSamlTestCase {
         SamlValidateAuthnRequestResponse response = future.actionGet();
         assertThat(response.isForceAuthn(), equalTo(false));
         assertThat(response.getSpEntityId(), equalTo("https://sp1.kibana.org"));
-        assertThat(response.getAuthnState().size(), equalTo(4));
+        assertThat(response.getAuthnState().size(), equalTo(2));
         assertThat(response.getAuthnState().get("authn_request_id"), equalTo(authnRequest.getID()));
         assertThat(response.getAuthnState().get("nameid_format"), equalTo(TRANSIENT));
     }
@@ -97,7 +98,7 @@ public class SamlAuthnRequestValidatorTests extends IdpSamlTestCase {
         SamlValidateAuthnRequestResponse response = future.actionGet();
         assertThat(response.isForceAuthn(), equalTo(false));
         assertThat(response.getSpEntityId(), equalTo("https://sp2.kibana.org"));
-        assertThat(response.getAuthnState().size(), equalTo(4));
+        assertThat(response.getAuthnState().size(), equalTo(2));
         assertThat(response.getAuthnState().get("authn_request_id"), equalTo(authnRequest.getID()));
         assertThat(response.getAuthnState().get("nameid_format"), equalTo(PERSISTENT));
     }
@@ -111,7 +112,7 @@ public class SamlAuthnRequestValidatorTests extends IdpSamlTestCase {
         SamlValidateAuthnRequestResponse response = future.actionGet();
         assertThat(response.isForceAuthn(), equalTo(false));
         assertThat(response.getSpEntityId(), equalTo("https://sp2.kibana.org"));
-        assertThat(response.getAuthnState().size(), equalTo(4));
+        assertThat(response.getAuthnState().size(), equalTo(2));
         assertThat(response.getAuthnState().get("authn_request_id"), equalTo(authnRequest.getID()));
         assertThat(response.getAuthnState().get("nameid_format"), equalTo(PERSISTENT));
     }
@@ -125,7 +126,7 @@ public class SamlAuthnRequestValidatorTests extends IdpSamlTestCase {
         SamlValidateAuthnRequestResponse response = future.actionGet();
         assertThat(response.isForceAuthn(), equalTo(false));
         assertThat(response.getSpEntityId(), equalTo("https://sp1.kibana.org"));
-        assertThat(response.getAuthnState().size(), equalTo(4));
+        assertThat(response.getAuthnState().size(), equalTo(2));
         assertThat(response.getAuthnState().get("authn_request_id"), equalTo(authnRequest.getID()));
         assertThat(response.getAuthnState().get("nameid_format"), equalTo(TRANSIENT));
     }
@@ -195,7 +196,7 @@ public class SamlAuthnRequestValidatorTests extends IdpSamlTestCase {
         PlainActionFuture<SamlValidateAuthnRequestResponse> future = new PlainActionFuture<>();
         validator.processQueryString(getQueryString(authnRequest, relayState), future);
         ElasticsearchSecurityException e = expectThrows(ElasticsearchSecurityException.class, future::actionGet);
-        assertThat(e.getMessage(), containsString("is not registered with this Identity Provider"));
+        assertThat(e.getMessage(), containsString("is not known to this Identity Provider"));
         assertThat(e.getMessage(), containsString("https://unknown.kibana.org"));
     }
 

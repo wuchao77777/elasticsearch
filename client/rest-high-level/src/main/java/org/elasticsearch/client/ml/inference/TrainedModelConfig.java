@@ -1,25 +1,15 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 package org.elasticsearch.client.ml.inference;
 
 import org.elasticsearch.Version;
 import org.elasticsearch.client.common.TimeUtil;
+import org.elasticsearch.client.ml.inference.trainedmodel.InferenceConfig;
 import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.unit.ByteSizeValue;
@@ -35,6 +25,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+
+import static org.elasticsearch.client.ml.inference.NamedXContentObjectHelper.writeNamedObject;
 
 public class TrainedModelConfig implements ToXContentObject {
 
@@ -54,6 +46,7 @@ public class TrainedModelConfig implements ToXContentObject {
     public static final ParseField ESTIMATED_OPERATIONS = new ParseField("estimated_operations");
     public static final ParseField LICENSE_LEVEL = new ParseField("license_level");
     public static final ParseField DEFAULT_FIELD_MAP = new ParseField("default_field_map");
+    public static final ParseField INFERENCE_CONFIG = new ParseField("inference_config");
 
     public static final ObjectParser<Builder, Void> PARSER = new ObjectParser<>(NAME,
             true,
@@ -78,6 +71,9 @@ public class TrainedModelConfig implements ToXContentObject {
         PARSER.declareLong(TrainedModelConfig.Builder::setEstimatedOperations, ESTIMATED_OPERATIONS);
         PARSER.declareString(TrainedModelConfig.Builder::setLicenseLevel, LICENSE_LEVEL);
         PARSER.declareObject(TrainedModelConfig.Builder::setDefaultFieldMap, (p, c) -> p.mapStrings(), DEFAULT_FIELD_MAP);
+        PARSER.declareNamedObject(TrainedModelConfig.Builder::setInferenceConfig,
+            (p, c, n) -> p.namedObject(InferenceConfig.class, n, null),
+            INFERENCE_CONFIG);
     }
 
     public static TrainedModelConfig fromXContent(XContentParser parser) throws IOException {
@@ -98,6 +94,7 @@ public class TrainedModelConfig implements ToXContentObject {
     private final Long estimatedOperations;
     private final String licenseLevel;
     private final Map<String, String> defaultFieldMap;
+    private final InferenceConfig inferenceConfig;
 
     TrainedModelConfig(String modelId,
                        String createdBy,
@@ -112,7 +109,8 @@ public class TrainedModelConfig implements ToXContentObject {
                        Long estimatedHeapMemory,
                        Long estimatedOperations,
                        String licenseLevel,
-                       Map<String, String> defaultFieldMap) {
+                       Map<String, String> defaultFieldMap,
+                       InferenceConfig inferenceConfig) {
         this.modelId = modelId;
         this.createdBy = createdBy;
         this.version = version;
@@ -127,6 +125,7 @@ public class TrainedModelConfig implements ToXContentObject {
         this.estimatedOperations = estimatedOperations;
         this.licenseLevel = licenseLevel;
         this.defaultFieldMap = defaultFieldMap == null ? null : Collections.unmodifiableMap(defaultFieldMap);
+        this.inferenceConfig = inferenceConfig;
     }
 
     public String getModelId() {
@@ -189,6 +188,10 @@ public class TrainedModelConfig implements ToXContentObject {
         return defaultFieldMap;
     }
 
+    public InferenceConfig getInferenceConfig() {
+        return inferenceConfig;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -238,6 +241,9 @@ public class TrainedModelConfig implements ToXContentObject {
         if (defaultFieldMap != null) {
             builder.field(DEFAULT_FIELD_MAP.getPreferredName(), defaultFieldMap);
         }
+        if (inferenceConfig != null) {
+            writeNamedObject(builder, params, INFERENCE_CONFIG.getPreferredName(), inferenceConfig);
+        }
         builder.endObject();
         return builder;
     }
@@ -265,6 +271,7 @@ public class TrainedModelConfig implements ToXContentObject {
             Objects.equals(estimatedOperations, that.estimatedOperations) &&
             Objects.equals(licenseLevel, that.licenseLevel) &&
             Objects.equals(defaultFieldMap, that.defaultFieldMap) &&
+            Objects.equals(inferenceConfig, that.inferenceConfig) &&
             Objects.equals(metadata, that.metadata);
     }
 
@@ -283,6 +290,7 @@ public class TrainedModelConfig implements ToXContentObject {
             metadata,
             licenseLevel,
             input,
+            inferenceConfig,
             defaultFieldMap);
     }
 
@@ -303,6 +311,7 @@ public class TrainedModelConfig implements ToXContentObject {
         private Long estimatedOperations;
         private String licenseLevel;
         private Map<String, String> defaultFieldMap;
+        private InferenceConfig inferenceConfig;
 
         public Builder setModelId(String modelId) {
             this.modelId = modelId;
@@ -387,6 +396,11 @@ public class TrainedModelConfig implements ToXContentObject {
             return this;
         }
 
+        public Builder setInferenceConfig(InferenceConfig inferenceConfig) {
+            this.inferenceConfig = inferenceConfig;
+            return this;
+        }
+
         public TrainedModelConfig build() {
             return new TrainedModelConfig(
                 modelId,
@@ -402,7 +416,8 @@ public class TrainedModelConfig implements ToXContentObject {
                 estimatedHeapMemory,
                 estimatedOperations,
                 licenseLevel,
-                defaultFieldMap);
+                defaultFieldMap,
+                inferenceConfig);
         }
     }
 

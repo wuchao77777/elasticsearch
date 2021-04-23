@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.transport;
@@ -33,7 +22,6 @@ import java.io.IOException;
 import java.util.ArrayList;
 
 import static org.hamcrest.Matchers.hasItems;
-import static org.hamcrest.Matchers.instanceOf;
 
 public class InboundDecoderTests extends ESTestCase {
 
@@ -108,20 +96,14 @@ public class InboundDecoderTests extends ESTestCase {
 
     public void testDecodePreHeaderSizeVariableInt() throws IOException {
         // TODO: Can delete test on 9.0
-        boolean isRequest = randomBoolean();
         boolean isCompressed = randomBoolean();
         String action = "test-request";
         long requestId = randomNonNegativeLong();
         final Version preHeaderVariableInt = Version.V_7_5_0;
-        OutboundMessage message;
         final String contentValue = randomAlphaOfLength(100);
-        if (isRequest) {
-            message = new OutboundMessage.Request(threadContext, new TestRequest(contentValue),
-                preHeaderVariableInt, action, requestId, false, isCompressed);
-        } else {
-            message = new OutboundMessage.Response(threadContext, new TestResponse(contentValue),
-                preHeaderVariableInt, requestId, false, isCompressed);
-        }
+        // 8.0 is only compatible with handshakes on a pre-variable int version
+        final OutboundMessage message = new OutboundMessage.Request(threadContext, new TestRequest(contentValue),
+            preHeaderVariableInt, action, requestId, true, isCompressed);
 
         final BytesReference totalBytes = message.serialize(new BytesStreamOutput());
         int partialHeaderSize = TcpHeader.headerSize(preHeaderVariableInt);
@@ -137,29 +119,17 @@ public class InboundDecoderTests extends ESTestCase {
         assertEquals(requestId, header.getRequestId());
         assertEquals(preHeaderVariableInt, header.getVersion());
         assertEquals(isCompressed, header.isCompressed());
-        assertFalse(header.isHandshake());
-        if (isRequest) {
-            assertTrue(header.isRequest());
-        } else {
-            assertTrue(header.isResponse());
-        }
+        assertTrue(header.isHandshake());
+        assertTrue(header.isRequest());
         assertTrue(header.needsToReadVariableHeader());
         fragments.clear();
 
-        final BytesReference bytes2 = totalBytes.slice(bytesConsumed, 2);
+        final BytesReference bytes2 = totalBytes.slice(bytesConsumed, totalBytes.length() - bytesConsumed);
         final ReleasableBytesReference releasable2 = ReleasableBytesReference.wrap(bytes2);
         int bytesConsumed2 = decoder.decode(releasable2, fragments::add);
-        assertEquals(0, fragments.size());
-        assertEquals(2, bytesConsumed2);
-
-        final BytesReference bytes3 = totalBytes.slice(bytesConsumed + 2, totalBytes.length() - bytesConsumed - bytesConsumed2);
-        final ReleasableBytesReference releasable3 = ReleasableBytesReference.wrap(bytes3);
-        int bytesConsumed3 = decoder.decode(releasable3, fragments::add);
-        assertEquals(totalBytes.length() - bytesConsumed - bytesConsumed2, bytesConsumed3);
-
-        final Object exception = fragments.get(0);
-
-        assertThat(exception, instanceOf(IllegalStateException.class));
+        assertEquals(2, fragments.size());
+        assertEquals(InboundDecoder.END_CONTENT, fragments.get(fragments.size() - 1));
+        assertEquals(totalBytes.length() - bytesConsumed, bytesConsumed2);
     }
 
     public void testDecodeHandshakeCompatibility() throws IOException {
@@ -296,25 +266,13 @@ public class InboundDecoderTests extends ESTestCase {
             incompatibleVersion, action, requestId, false, true);
 
         final BytesReference bytes = message.serialize(new BytesStreamOutput());
-        int totalHeaderSize = TcpHeader.headerSize(incompatibleVersion);
 
         InboundDecoder decoder = new InboundDecoder(Version.CURRENT, PageCacheRecycler.NON_RECYCLING_INSTANCE);
         final ArrayList<Object> fragments = new ArrayList<>();
         final ReleasableBytesReference releasable1 = ReleasableBytesReference.wrap(bytes);
-        int bytesConsumed = decoder.decode(releasable1, fragments::add);
-        assertEquals(totalHeaderSize, bytesConsumed);
+        expectThrows(IllegalStateException.class, () -> decoder.decode(releasable1, fragments::add));
+        // No bytes are retained
         assertEquals(1, releasable1.refCount());
-
-        final Header header = (Header) fragments.get(0);
-        assertEquals(requestId, header.getRequestId());
-        assertEquals(incompatibleVersion, header.getVersion());
-        fragments.clear();
-
-        final int remaining = bytes.length() - bytesConsumed;
-        final BytesReference bytes2 = bytes.slice(bytesConsumed, remaining);
-        final ReleasableBytesReference releasable2 = ReleasableBytesReference.wrap(bytes2);
-        bytesConsumed = decoder.decode(releasable2, fragments::add);
-        assertEquals(remaining, bytesConsumed);
     }
 
     public void testEnsureVersionCompatibility() throws IOException {

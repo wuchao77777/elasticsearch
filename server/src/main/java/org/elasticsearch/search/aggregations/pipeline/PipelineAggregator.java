@@ -1,29 +1,15 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.search.aggregations.pipeline;
 
 
 import org.elasticsearch.common.ParseField;
-import org.elasticsearch.common.io.stream.NamedWriteable;
-import org.elasticsearch.common.io.stream.StreamInput;
-import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.search.aggregations.InternalAggregation;
 import org.elasticsearch.search.aggregations.InternalAggregation.ReduceContext;
@@ -36,7 +22,7 @@ import java.util.Map;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 
-public abstract class PipelineAggregator implements NamedWriteable {
+public abstract class PipelineAggregator {
     /**
      * Parse the {@link PipelineAggregationBuilder} from a {@link XContentParser}.
      */
@@ -95,6 +81,13 @@ public abstract class PipelineAggregator implements NamedWriteable {
             return subTrees.getOrDefault(name, EMPTY);
         }
 
+        /**
+         * Return {@code true} if this node in the tree has any subtrees.
+         */
+        public boolean hasSubTrees() {
+            return false == subTrees.isEmpty();
+        }
+
         @Override
         public String toString() {
             return "PipelineTree[" + aggregators + "," + subTrees + "]";
@@ -103,32 +96,13 @@ public abstract class PipelineAggregator implements NamedWriteable {
 
     private String name;
     private String[] bucketsPaths;
-    private Map<String, Object> metaData;
+    private Map<String, Object> metadata;
 
-    protected PipelineAggregator(String name, String[] bucketsPaths, Map<String, Object> metaData) {
+    protected PipelineAggregator(String name, String[] bucketsPaths, Map<String, Object> metadata) {
         this.name = name;
         this.bucketsPaths = bucketsPaths;
-        this.metaData = metaData;
+        this.metadata = metadata;
     }
-
-    /**
-     * Read from a stream.
-     */
-    protected PipelineAggregator(StreamInput in) throws IOException {
-        name = in.readString();
-        bucketsPaths = in.readStringArray();
-        metaData = in.readMap();
-    }
-
-    @Override
-    public final void writeTo(StreamOutput out) throws IOException {
-        out.writeString(name);
-        out.writeStringArray(bucketsPaths);
-        out.writeMap(metaData);
-        doWriteTo(out);
-    }
-
-    protected abstract void doWriteTo(StreamOutput out) throws IOException;
 
     public String name() {
         return name;
@@ -138,8 +112,8 @@ public abstract class PipelineAggregator implements NamedWriteable {
         return bucketsPaths;
     }
 
-    public Map<String, Object> metaData() {
-        return metaData;
+    public Map<String, Object> metadata() {
+        return metadata;
     }
 
     public abstract InternalAggregation reduce(InternalAggregation aggregation, ReduceContext reduceContext);

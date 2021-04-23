@@ -5,6 +5,11 @@
       "description":"Creates or updates an index template."
     },
     "stability":"stable",
+    "visibility":"public",
+    "headers":{
+      "accept": [ "application/json"],
+      "content_type": ["application/json"]
+    },
     "url":{
       "paths":[
         {
@@ -23,13 +28,14 @@
       ]
     },
     "params":{
-      "order":{
-        "type":"number",
-        "description":"The order for this template when merging multiple matching ones (higher numbers are merged later, overriding the lower numbers)"
-      },
       "create":{
         "type":"boolean",
         "description":"Whether the index template should only be added if new or can also replace an existing one",
+        "default":false
+      },
+      "cause":{
+        "type":"string",
+        "description":"User defined reason for creating/updating the index template",
         "default":false
       },
       "master_timeout":{

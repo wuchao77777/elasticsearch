@@ -1,12 +1,12 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 
 package org.elasticsearch.xpack.search;
 
-import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.ShardSearchFailure;
@@ -14,28 +14,25 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentElasticsearchExtension;
 import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.script.ScriptException;
 import org.elasticsearch.search.SearchModule;
 import org.elasticsearch.search.internal.InternalSearchResponse;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.xpack.core.search.action.AsyncSearchResponse;
-import org.elasticsearch.xpack.core.transform.TransformField;
-import org.elasticsearch.xpack.core.transform.TransformNamedXContentProvider;
-import org.elasticsearch.xpack.core.transform.transforms.SyncConfig;
-import org.elasticsearch.xpack.core.transform.transforms.TimeSyncConfig;
 import org.junit.Before;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 
 import static java.util.Collections.emptyList;
-import static org.elasticsearch.xpack.search.GetAsyncSearchRequestTests.randomSearchId;
+import static org.elasticsearch.xpack.core.async.GetAsyncResultRequestTests.randomSearchId;
 
 public class AsyncSearchResponseTests extends ESTestCase {
     private SearchResponse searchResponse = randomSearchResponse();
@@ -46,12 +43,6 @@ public class AsyncSearchResponseTests extends ESTestCase {
         SearchModule searchModule = new SearchModule(Settings.EMPTY, emptyList());
 
         List<NamedWriteableRegistry.Entry> namedWriteables = searchModule.getNamedWriteables();
-        namedWriteables.add(new NamedWriteableRegistry.Entry(SyncConfig.class, TransformField.TIME_BASED_SYNC.getPreferredName(),
-            TimeSyncConfig::new));
-
-        List<NamedXContentRegistry.Entry> namedXContents = searchModule.getNamedXContents();
-        namedXContents.addAll(new TransformNamedXContentProvider().getNamedXContentParsers());
-
         namedWriteableRegistry = new NamedWriteableRegistry(namedWriteables);
     }
 
@@ -107,7 +98,8 @@ public class AsyncSearchResponseTests extends ESTestCase {
 
             case 2:
                 return new AsyncSearchResponse(searchId, searchResponse,
-                    new ElasticsearchException(new IOException("boum")), randomBoolean(), randomBoolean(),
+                    new ScriptException("messageData", new Exception("causeData"), Arrays.asList("stack1", "stack2"),
+                        "sourceData", "langData"), randomBoolean(), randomBoolean(),
                     randomNonNegativeLong(), randomNonNegativeLong());
 
             default:
@@ -119,7 +111,7 @@ public class AsyncSearchResponseTests extends ESTestCase {
         long tookInMillis = randomNonNegativeLong();
         int totalShards = randomIntBetween(1, Integer.MAX_VALUE);
         int successfulShards = randomIntBetween(0, totalShards);
-        int skippedShards = totalShards - successfulShards;
+        int skippedShards = randomIntBetween(0, successfulShards);
         InternalSearchResponse internalSearchResponse = InternalSearchResponse.empty();
         return new SearchResponse(internalSearchResponse, null, totalShards,
             successfulShards, skippedShards, tookInMillis, ShardSearchFailure.EMPTY_ARRAY, SearchResponse.Clusters.EMPTY);

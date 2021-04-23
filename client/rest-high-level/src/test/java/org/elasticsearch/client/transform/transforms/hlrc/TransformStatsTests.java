@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.client.transform.transforms.hlrc;
@@ -56,6 +45,18 @@ public class TransformStatsTests extends AbstractResponseTestCase<
         );
     }
 
+    public static void assertHlrcEquals(
+        org.elasticsearch.xpack.core.transform.transforms.TransformStats serverTestInstance,
+        TransformStats clientInstance
+    ) {
+        assertThat(serverTestInstance.getId(), equalTo(clientInstance.getId()));
+        assertThat(serverTestInstance.getState().value(), equalTo(clientInstance.getState().value()));
+        assertTransformIndexerStats(serverTestInstance.getIndexerStats(), clientInstance.getIndexerStats());
+        assertTransformCheckpointInfo(serverTestInstance.getCheckpointingInfo(), clientInstance.getCheckpointingInfo());
+        assertNodeAttributes(serverTestInstance.getNode(), clientInstance.getNode());
+        assertThat(serverTestInstance.getReason(), equalTo(clientInstance.getReason()));
+    }
+
     @Override
     protected org.elasticsearch.xpack.core.transform.transforms.TransformStats createServerTestInstance(XContentType xContentType) {
         return new org.elasticsearch.xpack.core.transform.transforms.TransformStats(
@@ -78,15 +79,10 @@ public class TransformStatsTests extends AbstractResponseTestCase<
         org.elasticsearch.xpack.core.transform.transforms.TransformStats serverTestInstance,
         TransformStats clientInstance
     ) {
-        assertThat(serverTestInstance.getId(), equalTo(clientInstance.getId()));
-        assertThat(serverTestInstance.getState().value(), equalTo(clientInstance.getState().value()));
-        assertTransformIndexerStats(serverTestInstance.getIndexerStats(), clientInstance.getIndexerStats());
-        assertTransformCheckpointInfo(serverTestInstance.getCheckpointingInfo(), clientInstance.getCheckpointingInfo());
-        assertNodeAttributes(serverTestInstance.getNode(), clientInstance.getNode());
-        assertThat(serverTestInstance.getReason(), equalTo(clientInstance.getReason()));
+        assertHlrcEquals(serverTestInstance, clientInstance);
     }
 
-    private void assertNodeAttributes(
+    private static void assertNodeAttributes(
         org.elasticsearch.xpack.core.transform.transforms.NodeAttributes serverTestInstance,
         NodeAttributes clientInstance
     ) {
@@ -153,15 +149,17 @@ public class TransformStatsTests extends AbstractResponseTestCase<
         assertThat(serverTestInstance.getExpAvgCheckpointDurationMs(), equalTo(clientInstance.getExpAvgCheckpointDurationMs()));
         assertThat(serverTestInstance.getExpAvgDocumentsProcessed(), equalTo(clientInstance.getExpAvgDocumentsProcessed()));
         assertThat(serverTestInstance.getExpAvgDocumentsIndexed(), equalTo(clientInstance.getExpAvgDocumentsIndexed()));
-        assertThat(serverTestInstance.getNumPages(), equalTo(clientInstance.getNumPages()));
+        assertThat(serverTestInstance.getNumPages(), equalTo(clientInstance.getPagesProcessed()));
         assertThat(serverTestInstance.getIndexFailures(), equalTo(clientInstance.getIndexFailures()));
         assertThat(serverTestInstance.getIndexTime(), equalTo(clientInstance.getIndexTime()));
         assertThat(serverTestInstance.getIndexTotal(), equalTo(clientInstance.getIndexTotal()));
-        assertThat(serverTestInstance.getNumDocuments(), equalTo(clientInstance.getNumDocuments()));
-        assertThat(serverTestInstance.getNumInvocations(), equalTo(clientInstance.getNumInvocations()));
-        assertThat(serverTestInstance.getOutputDocuments(), equalTo(clientInstance.getOutputDocuments()));
+        assertThat(serverTestInstance.getNumDocuments(), equalTo(clientInstance.getDocumentsProcessed()));
+        assertThat(serverTestInstance.getNumInvocations(), equalTo(clientInstance.getTriggerCount()));
+        assertThat(serverTestInstance.getOutputDocuments(), equalTo(clientInstance.getDocumentsIndexed()));
+        assertThat(serverTestInstance.getNumDeletedDocuments(), equalTo(clientInstance.getDocumentsDeleted()));
         assertThat(serverTestInstance.getSearchFailures(), equalTo(clientInstance.getSearchFailures()));
         assertThat(serverTestInstance.getSearchTime(), equalTo(clientInstance.getSearchTime()));
         assertThat(serverTestInstance.getSearchTotal(), equalTo(clientInstance.getSearchTotal()));
+        assertThat(serverTestInstance.getDeleteTime(), equalTo(clientInstance.getDeleteTime()));
     }
 }

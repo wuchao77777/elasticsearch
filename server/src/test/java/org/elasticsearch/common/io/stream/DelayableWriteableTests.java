@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.common.io.stream;
@@ -117,55 +106,62 @@ public class DelayableWriteableTests extends ESTestCase {
     public void testRoundTripFromReferencing() throws IOException {
         Example e = new Example(randomAlphaOfLength(5));
         DelayableWriteable<Example> original = DelayableWriteable.referencing(e);
-        assertFalse(original.isDelayed());
+        assertFalse(original.isSerialized());
         roundTripTestCase(original, Example::new);
     }
 
     public void testRoundTripFromReferencingWithNamedWriteable() throws IOException {
         NamedHolder n = new NamedHolder(new Example(randomAlphaOfLength(5)));
         DelayableWriteable<NamedHolder> original = DelayableWriteable.referencing(n);
-        assertFalse(original.isDelayed());
+        assertFalse(original.isSerialized());
         roundTripTestCase(original, NamedHolder::new);
     }
 
     public void testRoundTripFromDelayed() throws IOException {
         Example e = new Example(randomAlphaOfLength(5));
-        DelayableWriteable<Example> original = roundTrip(DelayableWriteable.referencing(e), Example::new, Version.CURRENT);
-        assertTrue(original.isDelayed());
+        DelayableWriteable<Example> original = DelayableWriteable.referencing(e).asSerialized(Example::new, writableRegistry());
+        assertTrue(original.isSerialized());
         roundTripTestCase(original, Example::new);
     }
 
     public void testRoundTripFromDelayedWithNamedWriteable() throws IOException {
         NamedHolder n = new NamedHolder(new Example(randomAlphaOfLength(5)));
-        DelayableWriteable<NamedHolder> original = roundTrip(DelayableWriteable.referencing(n), NamedHolder::new, Version.CURRENT);
-        assertTrue(original.isDelayed());
+        DelayableWriteable<NamedHolder> original = DelayableWriteable.referencing(n).asSerialized(NamedHolder::new, writableRegistry());
+        assertTrue(original.isSerialized());
         roundTripTestCase(original, NamedHolder::new);
     }
 
     public void testRoundTripFromDelayedFromOldVersion() throws IOException {
         Example e = new Example(randomAlphaOfLength(5));
         DelayableWriteable<Example> original = roundTrip(DelayableWriteable.referencing(e), Example::new, randomOldVersion());
-        assertTrue(original.isDelayed());
+        assertTrue(original.isSerialized());
         roundTripTestCase(original, Example::new);
     }
 
     public void testRoundTripFromDelayedFromOldVersionWithNamedWriteable() throws IOException {
         NamedHolder n = new NamedHolder(new Example(randomAlphaOfLength(5)));
         DelayableWriteable<NamedHolder> original = roundTrip(DelayableWriteable.referencing(n), NamedHolder::new, randomOldVersion());
-        assertTrue(original.isDelayed());
+        assertTrue(original.isSerialized());
         roundTripTestCase(original, NamedHolder::new);
     }
 
     public void testSerializesWithRemoteVersion() throws IOException {
         Version remoteVersion = VersionUtils.randomCompatibleVersion(random(), Version.CURRENT);
         DelayableWriteable<SneakOtherSideVersionOnWire> original = DelayableWriteable.referencing(new SneakOtherSideVersionOnWire());
-        assertThat(roundTrip(original, SneakOtherSideVersionOnWire::new, remoteVersion).get().version, equalTo(remoteVersion));
+        assertThat(roundTrip(original, SneakOtherSideVersionOnWire::new, remoteVersion).expand().version, equalTo(remoteVersion));
+    }
+
+    public void testAsSerializedIsNoopOnSerialized() throws IOException {
+        Example e = new Example(randomAlphaOfLength(5));
+        DelayableWriteable<Example> d = DelayableWriteable.referencing(e).asSerialized(Example::new, writableRegistry());
+        assertTrue(d.isSerialized());
+        assertSame(d, d.asSerialized(Example::new, writableRegistry()));
     }
 
     private <T extends Writeable> void roundTripTestCase(DelayableWriteable<T> original, Writeable.Reader<T> reader) throws IOException {
         DelayableWriteable<T> roundTripped = roundTrip(original, reader, Version.CURRENT);
-        assertTrue(roundTripped.isDelayed());
-        assertThat(roundTripped.get(), equalTo(original.get()));
+        assertTrue(roundTripped.isSerialized());
+        assertThat(roundTripped.expand(), equalTo(original.expand()));
     }
 
     private <T extends Writeable> DelayableWriteable<T> roundTrip(DelayableWriteable<T> original,
